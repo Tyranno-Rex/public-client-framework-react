@@ -15,7 +15,32 @@ export interface ApiClientConfig {
   setTokens: (accessToken: string, refreshToken?: string) => void;
   clearTokens: () => void;
   onUnauthorized?: () => void;
+  // Retry configuration
+  retry?: {
+    maxRetries?: number; // 최대 재시도 횟수 (기본: 3)
+    retryDelay?: number; // 기본 재시도 지연 시간 ms (기본: 1000)
+    retryOn?: number[]; // 재시도할 HTTP 상태 코드 (기본: [408, 500, 502, 503, 504])
+  };
 }
+
+// Retry configuration defaults
+const DEFAULT_RETRY_CONFIG = {
+  maxRetries: 3,
+  retryDelay: 1000,
+  retryOn: [408, 500, 502, 503, 504], // Request Timeout, Server errors
+};
+
+// Calculate delay with exponential backoff
+function calculateRetryDelay(retryCount: number, baseDelay: number): number {
+  // Exponential backoff: 1s, 2s, 4s, ...
+  const exponentialDelay = baseDelay * Math.pow(2, retryCount - 1);
+  // Add jitter (±20%) to prevent thundering herd
+  const jitter = exponentialDelay * 0.2 * (Math.random() - 0.5);
+  return Math.min(exponentialDelay + jitter, 30000); // Max 30 seconds
+}
+
+// Sleep utility
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Custom error class
 export class ApiError extends Error {
@@ -36,6 +61,8 @@ export class ApiError extends Error {
 
 // Create API client factory
 export function createApiClient(config: ApiClientConfig): AxiosInstance {
+  const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...config.retry };
+
   const client = axios.create({
     baseURL: config.baseURL,
     timeout: config.timeout || 30000,
@@ -128,6 +155,32 @@ export function createApiClient(config: ApiClientConfig): AxiosInstance {
         } finally {
           isRefreshing = false;
         }
+      }
+
+      // Retry logic for network errors and specific status codes
+      const retryCount = (originalRequest as InternalAxiosRequestConfig & { _retryCount?: number })._retryCount || 0;
+      const shouldRetry =
+        retryCount < retryConfig.maxRetries &&
+        (
+          // Network error (no response)
+          !error.response ||
+          // Specific status codes
+          (error.response?.status && retryConfig.retryOn.includes(error.response.status))
+        ) &&
+        // Don't retry POST/PUT/PATCH by default (not idempotent) unless explicitly safe
+        (!['POST', 'PUT', 'PATCH'].includes(originalRequest.method?.toUpperCase() || '') ||
+          originalRequest.headers?.['X-Idempotent'] === 'true');
+
+      if (shouldRetry) {
+        (originalRequest as InternalAxiosRequestConfig & { _retryCount?: number })._retryCount = retryCount + 1;
+        const delay = calculateRetryDelay(retryCount + 1, retryConfig.retryDelay);
+
+        console.warn(
+          `[API] Retry ${retryCount + 1}/${retryConfig.maxRetries} after ${Math.round(delay)}ms for ${originalRequest.url}`
+        );
+
+        await sleep(delay);
+        return client(originalRequest);
       }
 
       // Transform error response

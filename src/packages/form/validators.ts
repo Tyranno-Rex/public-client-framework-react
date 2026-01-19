@@ -3,14 +3,28 @@
  */
 
 export interface ValidationRule<T = unknown> {
-  /** Validation function */
+  /** Validation function (sync) */
   validate: (value: T) => boolean;
   /** Error message */
   message: string;
 }
 
+/** Async validation rule for server-side checks */
+export interface AsyncValidationRule<T = unknown> {
+  /** Async validation function */
+  validate: (value: T) => Promise<boolean>;
+  /** Error message */
+  message: string;
+  /** Debounce delay in ms (default: 300) */
+  debounceMs?: number;
+}
+
 export type ValidationSchema<T> = {
   [K in keyof T]?: ValidationRule<T[K]>[];
+};
+
+export type AsyncValidationSchema<T> = {
+  [K in keyof T]?: AsyncValidationRule<T[K]>[];
 };
 
 /** Common validators */
@@ -98,6 +112,52 @@ export const validators = {
     validate,
     message,
   }),
+
+  /** Confirm password - cross-field validation */
+  confirmPassword: (
+    getPassword: () => string,
+    message = '비밀번호가 일치하지 않습니다'
+  ): ValidationRule<string> => ({
+    validate: (value) => {
+      if (!value) return true;
+      return value === getPassword();
+    },
+    message,
+  }),
+};
+
+/**
+ * Async validators - for server-side validation (e.g., duplicate checks)
+ */
+export const asyncValidators = {
+  /**
+   * Check uniqueness via API call
+   * @param checkFn - API function that returns true if value is available
+   * @param message - Error message when value is not available
+   * @param debounceMs - Debounce delay (default: 300ms)
+   */
+  unique: <T>(
+    checkFn: (value: T) => Promise<boolean>,
+    message: string,
+    debounceMs = 300
+  ): AsyncValidationRule<T> => ({
+    validate: checkFn,
+    message,
+    debounceMs,
+  }),
+
+  /**
+   * Custom async validator
+   */
+  custom: <T>(
+    validate: (value: T) => Promise<boolean>,
+    message: string,
+    debounceMs = 300
+  ): AsyncValidationRule<T> => ({
+    validate,
+    message,
+    debounceMs,
+  }),
 };
 
 /**
@@ -138,4 +198,79 @@ export function validateForm<T extends Record<string, unknown>>(
   }
 
   return errors;
+}
+
+/**
+ * Validate a single field asynchronously
+ */
+export async function validateFieldAsync<T>(
+  value: T,
+  rules: AsyncValidationRule<T>[]
+): Promise<string | null> {
+  for (const rule of rules) {
+    const isValid = await rule.validate(value);
+    if (!isValid) {
+      return rule.message;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate all fields asynchronously
+ */
+export async function validateFormAsync<T extends Record<string, unknown>>(
+  values: T,
+  schema: AsyncValidationSchema<T>
+): Promise<Record<keyof T, string | null>> {
+  const errors = {} as Record<keyof T, string | null>;
+  const keys = Object.keys(schema) as (keyof T)[];
+
+  const results = await Promise.all(
+    keys.map(async (key) => {
+      const rules = schema[key];
+      if (rules) {
+        return validateFieldAsync(values[key], rules as AsyncValidationRule<T[keyof T]>[]);
+      }
+      return null;
+    })
+  );
+
+  keys.forEach((key, index) => {
+    errors[key] = results[index];
+  });
+
+  return errors;
+}
+
+/**
+ * Debounce utility for async validation
+ */
+export function createDebouncedValidator<T>(
+  validator: AsyncValidationRule<T>,
+  debounceMs?: number
+): (value: T) => Promise<string | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let pendingPromise: Promise<string | null> | null = null;
+
+  const delay = debounceMs ?? validator.debounceMs ?? 300;
+
+  return (value: T): Promise<string | null> => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+
+    pendingPromise = new Promise((resolve) => {
+      timeoutId = setTimeout(async () => {
+        try {
+          const isValid = await validator.validate(value);
+          resolve(isValid ? null : validator.message);
+        } catch {
+          resolve(null); // On error, don't block - let server handle it
+        }
+      }, delay);
+    });
+
+    return pendingPromise;
+  };
 }
