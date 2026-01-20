@@ -22,6 +22,8 @@ export interface AuthState {
   logout: () => Promise<void>;
   setUser: (user: User | null) => void;
   setTokens: (accessToken: string, refreshToken?: string) => void;
+  setAccessToken: (accessToken: string) => void;
+  clearTokens: () => void;
   clearAuth: () => void;
   getAccessToken: () => string | null;
   getRefreshToken: () => string | null;
@@ -81,7 +83,26 @@ export const useAuthStore = create<AuthState>()(
           accessToken,
           refreshToken: refreshToken ?? state.refreshToken,
           isAuthenticated: true,
+          error: null, // 토큰 갱신 성공 시 에러 클리어
         }));
+      },
+
+      // Set access token only (for silent refresh)
+      setAccessToken: (accessToken) => {
+        set({
+          accessToken,
+          isAuthenticated: true,
+          error: null,
+        });
+      },
+
+      // Clear tokens only (keep user info)
+      clearTokens: () => {
+        set({
+          accessToken: null,
+          refreshToken: null,
+          isAuthenticated: false,
+        });
       },
 
       // Clear all auth state

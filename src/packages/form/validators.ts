@@ -40,11 +40,19 @@ export const validators = {
     message,
   }),
 
-  /** Email format */
+  /**
+   * Email format (RFC 5322 근사)
+   *
+   * 이 정규식은 대부분의 유효한 이메일을 검증합니다:
+   * - 로컬 파트: 알파벳, 숫자, 특수문자 허용
+   * - 도메인: 최소 2자 이상의 TLD 필요
+   * - 일반적인 오타 및 잘못된 형식 차단
+   */
   email: (message = '올바른 이메일 형식이 아닙니다'): ValidationRule<string> => ({
     validate: (value) => {
       if (!value) return true; // Use with required() if needed
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      // RFC 5322 근사 - 로컬 파트 + @ + 도메인 (최소 2자 TLD)
+      const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+$/;
       return emailRegex.test(value);
     },
     message,
@@ -243,6 +251,24 @@ export async function validateFormAsync<T extends Record<string, unknown>>(
   return errors;
 }
 
+/** 비동기 검증 에러 타입 */
+export interface AsyncValidationError {
+  /** 검증 실패 메시지 또는 실행 에러 메시지 */
+  message: string;
+  /** 검증 실패(false) vs 실행 에러(true) 구분 */
+  isExecutionError: boolean;
+}
+
+/** 비동기 검증 결과 타입 */
+export type AsyncValidationResult = {
+  /** 유효한 경우 */
+  valid: true;
+} | {
+  /** 유효하지 않은 경우 */
+  valid: false;
+  error: AsyncValidationError;
+};
+
 /**
  * Debounce utility for async validation
  */
@@ -272,5 +298,90 @@ export function createDebouncedValidator<T>(
     });
 
     return pendingPromise;
+  };
+}
+
+/**
+ * 비동기 검증 (에러 구분 가능)
+ *
+ * 검증 실패와 실행 에러를 구분하여 반환합니다.
+ * 실행 에러 발생 시에도 사용자에게 알릴 수 있습니다.
+ */
+export async function validateFieldAsyncWithError<T>(
+  value: T,
+  rules: AsyncValidationRule<T>[]
+): Promise<AsyncValidationResult> {
+  for (const rule of rules) {
+    try {
+      const isValid = await rule.validate(value);
+      if (!isValid) {
+        return {
+          valid: false,
+          error: {
+            message: rule.message,
+            isExecutionError: false,
+          },
+        };
+      }
+    } catch (error) {
+      // 실행 에러도 보고 (검증 실패와 구분)
+      return {
+        valid: false,
+        error: {
+          message: error instanceof Error
+            ? `검증 중 오류가 발생했습니다: ${error.message}`
+            : '검증 중 오류가 발생했습니다',
+          isExecutionError: true,
+        },
+      };
+    }
+  }
+  return { valid: true };
+}
+
+/**
+ * Debounce utility for async validation (에러 구분 가능 버전)
+ */
+export function createDebouncedValidatorWithError<T>(
+  validator: AsyncValidationRule<T>,
+  debounceMs?: number
+): (value: T) => Promise<AsyncValidationResult> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const delay = debounceMs ?? validator.debounceMs ?? 300;
+
+  return (value: T): Promise<AsyncValidationResult> => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+
+    return new Promise((resolve) => {
+      timeoutId = setTimeout(async () => {
+        try {
+          const isValid = await validator.validate(value);
+          if (isValid) {
+            resolve({ valid: true });
+          } else {
+            resolve({
+              valid: false,
+              error: {
+                message: validator.message,
+                isExecutionError: false,
+              },
+            });
+          }
+        } catch (error) {
+          resolve({
+            valid: false,
+            error: {
+              message: error instanceof Error
+                ? `검증 중 오류가 발생했습니다: ${error.message}`
+                : '검증 중 오류가 발생했습니다',
+              isExecutionError: true,
+            },
+          });
+        }
+      }, delay);
+    });
   };
 }

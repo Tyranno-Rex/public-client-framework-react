@@ -1,9 +1,20 @@
 /**
  * WebSocket Client - STOMP over WebSocket with reconnection
  * Matches Spring Boot server WebSocket configuration
+ *
+ * 보안 주의사항:
+ * - 토큰은 URL이 아닌 STOMP CONNECT 프레임의 Authorization 헤더로 전송됩니다.
+ * - URL에 토큰을 노출하면 브라우저 히스토리, 서버 로그, Referer 헤더에 기록될 수 있습니다.
  */
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/**
+ * 토큰 전송 방식
+ * - 'header': STOMP CONNECT 프레임의 Authorization 헤더로 전송 (권장)
+ * - 'query': URL 쿼리 파라미터로 전송 (보안 주의 필요 - SockJS 폴백 시 필요할 수 있음)
+ */
+export type TokenTransport = 'header' | 'query';
 
 export interface WebSocketConfig {
   /** WebSocket endpoint URL (e.g., 'ws://localhost:8080/ws') */
@@ -12,6 +23,8 @@ export interface WebSocketConfig {
   useSockJS?: boolean;
   /** JWT access token for authentication */
   accessToken?: string;
+  /** Token transport method (default: 'header') */
+  tokenTransport?: TokenTransport;
   /** Auto reconnect on disconnect */
   autoReconnect?: boolean;
   /** Reconnect delay in ms (default: 3000) */
@@ -56,12 +69,21 @@ export class WebSocketClient {
       url: config.url,
       useSockJS: config.useSockJS ?? false,
       accessToken: config.accessToken ?? '',
+      tokenTransport: config.tokenTransport ?? 'header', // 기본값: 헤더로 전송 (보안)
       autoReconnect: config.autoReconnect ?? true,
       reconnectDelay: config.reconnectDelay ?? 3000,
       maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
       heartbeatInterval: config.heartbeatInterval ?? 10000,
       debug: config.debug ?? false,
     };
+
+    // query 방식 사용 시 보안 경고
+    if (this.config.tokenTransport === 'query' && this.config.accessToken) {
+      console.warn(
+        '[WebSocket] 보안 경고: tokenTransport="query" 사용 시 토큰이 URL에 노출됩니다. ' +
+        '가능하면 tokenTransport="header"를 사용하세요.'
+      );
+    }
   }
 
   /** Connect to WebSocket server */
@@ -196,8 +218,9 @@ export class WebSocketClient {
   private buildUrl(): string {
     let url = this.config.url;
 
-    // Add access token as query param for SockJS compatibility
-    if (this.config.accessToken) {
+    // query 방식인 경우에만 URL에 토큰 추가 (SockJS 폴백 호환용)
+    // 보안상 header 방식을 권장
+    if (this.config.tokenTransport === 'query' && this.config.accessToken) {
       const separator = url.includes('?') ? '&' : '?';
       url += `${separator}access_token=${encodeURIComponent(this.config.accessToken)}`;
     }
@@ -360,10 +383,24 @@ export class WebSocketClient {
         this.sendSubscribeFrame(sub.id, sub.destination);
       });
     } else if (command === 'ERROR') {
-      const errorMessage = lines.slice(1).join('\n');
-      this.log('STOMP error:', errorMessage);
-      this.notifyError(new Error(errorMessage));
+      // 에러 메시지에서 민감 정보 제거
+      const rawErrorMessage = lines.slice(1).join('\n');
+      const sanitizedMessage = this.sanitizeErrorMessage(rawErrorMessage);
+      this.log('STOMP error:', sanitizedMessage);
+      this.notifyError(new Error(sanitizedMessage));
     }
+  }
+
+  /**
+   * 에러 메시지에서 민감 정보 제거
+   */
+  private sanitizeErrorMessage(message: string): string {
+    // 토큰, 비밀번호 등 민감 정보 패턴 제거
+    return message
+      .replace(/Bearer\s+[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]*/gi, 'Bearer [REDACTED]')
+      .replace(/password["\s:=]+["']?[^"'\s,}]+["']?/gi, 'password=[REDACTED]')
+      .replace(/token["\s:=]+["']?[A-Za-z0-9-_=.]+["']?/gi, 'token=[REDACTED]')
+      .replace(/secret["\s:=]+["']?[^"'\s,}]+["']?/gi, 'secret=[REDACTED]');
   }
 
   private log(...args: unknown[]): void {

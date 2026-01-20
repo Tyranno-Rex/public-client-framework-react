@@ -15,6 +15,8 @@ export interface ApiClientConfig {
   setTokens: (accessToken: string, refreshToken?: string) => void;
   clearTokens: () => void;
   onUnauthorized?: () => void;
+  /** Token refresh 엔드포인트 (기본: /api/auth/refresh) */
+  refreshEndpoint?: string;
   // Retry configuration
   retry?: {
     maxRetries?: number; // 최대 재시도 횟수 (기본: 3)
@@ -59,9 +61,13 @@ export class ApiError extends Error {
   }
 }
 
+// Default refresh endpoint
+const DEFAULT_REFRESH_ENDPOINT = '/api/auth/refresh';
+
 // Create API client factory
 export function createApiClient(config: ApiClientConfig): AxiosInstance {
   const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...config.retry };
+  const refreshEndpoint = config.refreshEndpoint ?? DEFAULT_REFRESH_ENDPOINT;
 
   const client = axios.create({
     baseURL: config.baseURL,
@@ -134,10 +140,10 @@ export function createApiClient(config: ApiClientConfig): AxiosInstance {
             throw new Error('No refresh token available');
           }
 
-          const response = await axios.post<ApiResponse<RefreshTokenResponse>>(
-            `${config.baseURL}/api/auth/refresh`,
-            { refreshToken },
-            { headers: { 'Content-Type': 'application/json' } }
+          // 설정된 클라이언트를 사용하여 refresh 요청 (인터셉터 적용)
+          const response = await client.post<ApiResponse<RefreshTokenResponse>>(
+            refreshEndpoint,
+            { refreshToken }
           );
 
           const { accessToken } = response.data.data;
