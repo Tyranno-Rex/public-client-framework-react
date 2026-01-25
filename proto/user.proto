@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.common.server.grpc.user";
+option java_outer_classname = "UserProto";
+
+package user;
+
+import "common.proto";
+
+/**
+ * User Service - User management operations
+ */
+service UserService {
+  // Get user by ID
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+
+  // Get current user profile
+  rpc GetProfile(common.Empty) returns (UserResponse);
+
+  // Update user profile
+  rpc UpdateProfile(UpdateProfileRequest) returns (UserResponse);
+
+  // List users with pagination
+  rpc ListUsers(common.PageRequest) returns (UserListResponse);
+
+  // Delete user
+  rpc DeleteUser(DeleteUserRequest) returns (common.ApiResponse);
+}
+
+// User message
+message User {
+  string id = 1;
+  string email = 2;
+  string username = 3;
+  string display_name = 4;
+  string avatar_url = 5;
+  string role = 6;
+  common.Timestamp created_at = 7;
+  common.Timestamp updated_at = 8;
+}
+
+// Get user request
+message GetUserRequest {
+  string user_id = 1;
+}
+
+// User response
+message UserResponse {
+  bool success = 1;
+  string message = 2;
+  User user = 3;
+}
+
+// Update profile request
+message UpdateProfileRequest {
+  string display_name = 1;
+  string avatar_url = 2;
+}
+
+// User list response
+message UserListResponse {
+  bool success = 1;
+  string message = 2;
+  repeated User users = 3;
+  common.PageMetadata page_metadata = 4;
+}
+
+// Delete user request
+message DeleteUserRequest {
+  string user_id = 1;
+}

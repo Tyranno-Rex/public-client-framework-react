@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.common.server.grpc.health";
+option java_outer_classname = "HealthProto";
+
+package health;
+
+import "common.proto";
+
+/**
+ * Health Service - Service health checks
+ */
+service HealthService {
+  // Check service health
+  rpc Check(common.Empty) returns (HealthCheckResponse);
+
+  // Get service version
+  rpc Version(common.Empty) returns (VersionResponse);
+}
+
+// Health check response
+message HealthCheckResponse {
+  bool healthy = 1;
+  string status = 2;
+  string timestamp = 3;
+}
+
+// Version response
+message VersionResponse {
+  string version = 1;
+  string build_time = 2;
+  string git_commit = 3;
+}

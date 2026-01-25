@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.common.server.grpc.common";
+option java_outer_classname = "CommonProto";
+
+package common;
+
+/**
+ * Common types used across services
+ */
+
+// Response wrapper
+message ApiResponse {
+  bool success = 1;
+  string message = 2;
+  int32 code = 3;
+}
+
+// Pagination request
+message PageRequest {
+  int32 page = 1;
+  int32 size = 2;
+  string sort = 3;
+}
+
+// Pagination response metadata
+message PageMetadata {
+  int32 page = 1;
+  int32 size = 2;
+  int64 total_elements = 3;
+  int32 total_pages = 4;
+}
+
+// Timestamp
+message Timestamp {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}
+
+// Empty request (for methods with no input)
+message Empty {}
